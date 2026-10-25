@@ -1,0 +1,136 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function verifiedUser() {
+      return request.auth != null
+        && request.auth.token.email_verified == true;
+    }
+    function self(id) { return verifiedUser() && request.auth.uid == id; }
+    function user(id) { return get(/databases/$(database)/documents/users/$(id)).data; }
+    function seller(id) { return self(id) && user(id).role == 'seller'; }
+
+    match /users/{id} {
+      allow get: if verifiedUser() && (request.auth.uid == id || resource.data.role == 'seller');
+      allow list: if false;
+      allow create: if self(id)
+        && request.resource.data.keys().hasOnly(['id', 'name', 'role'])
+        && request.resource.data.id == id
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.role in ['buyer', 'seller'];
+      allow update: if seller(id)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shopName', 'pickupLocation', 'qrisUrl'])
+        && request.resource.data.shopName is string
+        && request.resource.data.pickupLocation is string
+        && (!('qrisUrl' in request.resource.data)
+          || (request.resource.data.qrisUrl is string
+            && request.resource.data.qrisUrl.size() < 700000
+            && request.resource.data.qrisUrl.matches('data:image/jpeg;base64,.*')));
+      allow delete: if false;
+    }
+
+    match /listings/{id} {
+      allow read: if verifiedUser();
+      allow create: if seller(request.resource.data.sellerId)
+        && request.resource.data.keys().hasOnly(['campus','sellerId','sellerName','name','category','price','stock','description','pickupLocation','preorderDeadline','pickupTime','active','createdAt'])
+        && request.resource.data.campus == 'BINUS'
+        && request.resource.data.price is int && request.resource.data.price > 0
+        && request.resource.data.stock is int && request.resource.data.stock >= 0
+        && request.resource.data.active == true;
+      allow update: if (
+        seller(resource.data.sellerId)
+        && request.resource.data.campus == resource.data.campus
+        && request.resource.data.sellerId == resource.data.sellerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.stock is int && request.resource.data.stock >= 0
+        && request.resource.data.price is int && request.resource.data.price > 0
+      ) || (
+        verifiedUser() && user(request.auth.uid).role == 'buyer'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock','lastOrderId'])
+        && request.resource.data.stock is int
+        && request.resource.data.stock >= 0
+        && request.resource.data.stock < resource.data.stock
+        && !exists(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId))
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.buyerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.listingId == id
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.quantity == resource.data.stock - request.resource.data.stock
+      ) || (
+        verifiedUser() && user(request.auth.uid).role == 'buyer'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock','lastOrderId'])
+        && request.resource.data.stock is int
+        && request.resource.data.stock > resource.data.stock
+        && get(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.buyerId == request.auth.uid
+        && get(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.listingId == id
+        && get(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.status == 'pending_payment'
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.status == 'cancelled'
+        && get(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.quantity == request.resource.data.stock - resource.data.stock
+      );
+      allow delete: if false;
+    }
+
+    match /orders/{id} {
+      allow get, list: if verifiedUser() && (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid);
+      allow create: if verifiedUser() && user(request.auth.uid).role == 'buyer'
+        && request.resource.data.keys().hasOnly(['buyerId','buyerName','sellerId','sellerName','listingId','foodName','unitPrice','quantity','total','pickupLocation','pickupTime','purchaseType','status','createdAt','updatedAt'])
+        && request.resource.data.buyerId == request.auth.uid
+        && request.resource.data.purchaseType in ['online', 'onsite']
+        && request.resource.data.status == 'pending_payment'
+        && request.resource.data.quantity is int && request.resource.data.quantity > 0
+        && request.resource.data.listingId is string
+        && get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.active == true
+        && request.resource.data.sellerId == get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.sellerId
+        && request.resource.data.unitPrice == get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.price
+        && request.resource.data.total == request.resource.data.unitPrice * request.resource.data.quantity
+        && getAfter(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.stock
+          == get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.stock - request.resource.data.quantity
+        && getAfter(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.lastOrderId == id;
+      allow update: if verifiedUser()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','proofId','updatedAt'])
+        && (
+          (request.auth.uid == resource.data.buyerId
+            && resource.data.status == 'pending_payment'
+            && request.resource.data.status == 'proof_submitted'
+            && request.resource.data.proofId == id
+            && !exists(/databases/$(database)/documents/proofs/$(id))
+            && getAfter(/databases/$(database)/documents/proofs/$(id)).data.buyerId == request.auth.uid)
+          ||
+          (request.auth.uid == resource.data.buyerId
+            && resource.data.status == 'pending_payment'
+            && request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+            && getAfter(/databases/$(database)/documents/listings/$(resource.data.listingId)).data.stock
+              == get(/databases/$(database)/documents/listings/$(resource.data.listingId)).data.stock + resource.data.quantity
+            && getAfter(/databases/$(database)/documents/listings/$(resource.data.listingId)).data.lastOrderId == id)
+          ||
+          (request.auth.uid == resource.data.sellerId
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+            && (
+              ((resource.data.status == 'proof_submitted'
+                || (resource.data.status == 'pending_payment' && resource.data.purchaseType == 'onsite'))
+                && request.resource.data.status == 'preparing')
+              || (resource.data.status == 'preparing' && request.resource.data.status == 'ready')
+              || (resource.data.status == 'ready' && request.resource.data.status == 'completed')
+            ))
+        );
+      allow delete: if false;
+    }
+
+    match /proofs/{id} {
+      allow get: if verifiedUser()
+        && (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid);
+      allow list: if false;
+      allow create: if verifiedUser()
+        && request.resource.data.keys().hasOnly(['buyerId','sellerId','dataUrl'])
+        && request.resource.data.buyerId == request.auth.uid
+        && request.resource.data.dataUrl is string
+        && request.resource.data.dataUrl.size() < 700000
+        && request.resource.data.dataUrl.matches('data:image/jpeg;base64,.*')
+        && get(/databases/$(database)/documents/orders/$(id)).data.buyerId == request.auth.uid
+        && get(/databases/$(database)/documents/orders/$(id)).data.sellerId == request.resource.data.sellerId
+        && get(/databases/$(database)/documents/orders/$(id)).data.status == 'pending_payment'
+        && getAfter(/databases/$(database)/documents/orders/$(id)).data.status == 'proof_submitted'
+        && getAfter(/databases/$(database)/documents/orders/$(id)).data.proofId == id;
+      allow update, delete: if false;
+    }
+  }
+}
