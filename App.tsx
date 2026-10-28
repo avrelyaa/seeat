@@ -107,7 +107,7 @@ export default function App({ screen = 'discover' }: { screen?: 'discover' | 'or
   </KeyboardAvoidingView></SafeAreaView>;
 }
 
-function Empty({ text }: { text: string }) { return <View style={s.empty}><Image source={foodPlaceholder} style={s.emptyArt} resizeMode="cover" /><Text style={s.cardTitle}>{text}</Text></View>; }
+function Empty({ text, image = foodPlaceholder }: { text: string; image?: ImageSourcePropType }) { return <View style={s.empty}><Image source={image} style={s.emptyArt} resizeMode={image === foodPlaceholder ? 'cover' : 'contain'} /><Text style={s.cardTitle}>{text}</Text></View>; }
 function ProductSheet({ item, buyer, verified, run, busy, close, ordered }: { item: Listing; buyer: Profile; verified?: boolean; run: (f: () => Promise<void>) => void; busy: boolean; close: () => void; ordered: () => void }) {
   const [reporting, setReporting] = useState(false);
   return <View style={s.overlay}><ScrollView style={s.sheet} contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
@@ -179,19 +179,18 @@ function Orders({ items, profile, run, busy }: { items: Order[]; profile: Profil
       {seller && o.status === 'preparing' && <Button label="Mark ready" disabled={busy} press={() => run(() => updateOrderStatus(o, 'ready'))} />}
       {seller && o.status === 'ready' && <Button label="Complete order" disabled={busy} press={() => run(() => updateOrderStatus(o, 'completed'))} />}
     </View>)}
-    {!items.length && <Empty text="No orders yet" />}
+    {!items.length && <Empty text="No orders yet" image={art.ingredients} />}
   </>;
 }
 function SellerFoods({ profile, items, run, busy }: { profile: Profile; items: Listing[]; run: (f: () => Promise<void>) => void; busy: boolean }) {
   const [edit, setEdit] = useState<Listing | null>(null), [open, setOpen] = useState(false);
-  return <><Hero eyebrow="YOUR KITCHEN" title={'Food worth\nsharing.'} image={art.chef} green /><View style={s.sectionRow}><Text style={s.section}>Your menu</Text><Pressable onPress={() => { setEdit(null); setOpen(true); }}><Text style={s.addLink}>+ Add food</Text></Pressable></View>{open && <ListingEditor key={edit?.id || 'new'} profile={profile} item={edit} run={run} busy={busy} close={() => setOpen(false)} />}{items.map(x => <View key={x.id} style={s.card}><FoodArt images={x.images} /><View style={s.cardCopy}><Text style={s.overline}>{x.category.toUpperCase()}</Text><Text style={s.cardTitle}>{x.name}</Text><Text style={s.muted}>{x.stock} portions · {money(x.price)}</Text><Pressable onPress={() => { setEdit(x); setOpen(true); }}><Text style={s.editLink}>Edit food & stock →</Text></Pressable></View></View>)}{!items.length && <Empty text="Add your first food" />}</>;
+  return <><Hero eyebrow="YOUR KITCHEN" title={'Food worth\nsharing.'} image={art.chef} green /><View style={s.sectionRow}><Text style={s.section}>Your menu</Text><Pressable onPress={() => { setEdit(null); setOpen(true); }}><Text style={s.addLink}>+ Add food</Text></Pressable></View>{open && <ListingEditor key={edit?.id || 'new'} profile={profile} item={edit} run={run} busy={busy} close={() => setOpen(false)} />}{items.map(x => <View key={x.id} style={s.card}><FoodArt images={x.images} /><View style={s.cardCopy}><Text style={s.overline}>{x.category.toUpperCase()}</Text><Text style={s.cardTitle}>{x.name}</Text><Text style={s.muted}>{x.stock} portions · {money(x.price)}</Text><Pressable onPress={() => { setEdit(x); setOpen(true); }}><Text style={s.editLink}>Edit food & stock →</Text></Pressable></View></View>)}{!items.length && <Empty text="Add your first food" image={art.ingredients} />}</>;
 }
 function ListingEditor({ profile, item, run, busy, close }: { profile: Profile; item: Listing | null; run: (f: () => Promise<void>) => void; busy: boolean; close: () => void }) {
   const [name, setName] = useState(item?.name || ''), [category, setCategory] = useState(item?.category || 'Meals'), [price, setPrice] = useState(String(item?.price || '')), [stock, setStock] = useState(String(item?.stock ?? '')), [pickup, setPickup] = useState(item?.pickupLocation || profile.pickupLocation || ''), [deadline, setDeadline] = useState(item?.preorderDeadline || ''), [pickupTime, setPickupTime] = useState(item?.pickupTime || '');
   const [images, setImages] = useState<string[]>(item?.images || []);
   return <View style={s.editor}>
     <View style={s.sectionRow}><Text style={s.section}>{item ? 'Edit food' : 'Add food'}</Text><Pressable onPress={close}><Text style={s.link}>Close ×</Text></Pressable></View>
-    <Image source={art.ingredients} style={s.editorArt} resizeMode="contain" />
     <Field label="Food name" value={name} change={setName} hint="What are you making?" />
     <Text style={s.label}>Photos · up to 3</Text>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.photoStrip}>
@@ -263,7 +262,6 @@ const s = StyleSheet.create({
   foodArtLarge: { height: 190, borderRadius: 20, overflow: 'hidden', marginBottom: 18, backgroundColor: '#F7DDE9' },
   galleryCount: { position: 'absolute', right: 10, bottom: 10, color: '#FFFFFF', backgroundColor: '#3B1831', overflow: 'hidden', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 12, fontSize: 11, fontWeight: '800' },
   emptyArt: { width: 145, height: 130, borderRadius: 14 },
-  editorArt: { width: 130, height: 86, alignSelf: 'flex-end', marginTop: -12, marginBottom: -6 },
   photoStrip: { gap: 10, paddingVertical: 6 },
   photoTile: { width: 112 },
   photoPreview: { width: 112, height: 112, borderRadius: 13, backgroundColor: '#F7DDE9' },
