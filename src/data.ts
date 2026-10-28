@@ -1,5 +1,5 @@
 import { User } from 'firebase/auth';
-import { collection, doc, getDoc, onSnapshot, query, runTransaction, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { collection, deleteField, doc, getDoc, onSnapshot, query, runTransaction, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 
 export type Profile = { id: string; name: string; role: 'buyer' | 'seller'; shopName?: string; pickupLocation?: string; qrisUrl?: string; verified?: boolean };
@@ -98,10 +98,10 @@ export async function cancelUnpaidOrder(order: Order) {
   });
 }
 
-export async function saveShop(profile: Profile, shopName: string, pickupLocation: string, qrisUri?: string) {
+export async function saveShop(profile: Profile, shopName: string, pickupLocation: string, qrisUri?: string | null): Promise<Profile> {
   if (qrisUri) assertImageSize(qrisUri);
-  const qrisUrl = qrisUri || profile.qrisUrl;
-  const patch = { shopName: shopName.trim(), pickupLocation: pickupLocation.trim(), ...(qrisUrl ? { qrisUrl } : {}) };
+  const qrisUrl = qrisUri === null ? undefined : qrisUri || profile.qrisUrl;
+  const patch = { shopName: shopName.trim(), pickupLocation: pickupLocation.trim(), ...(qrisUri === null ? { qrisUrl: deleteField() } : qrisUrl ? { qrisUrl } : {}) };
   await updateDoc(doc(db, 'users', profile.id), patch);
-  return { ...profile, ...patch };
+  return { ...profile, shopName: shopName.trim(), pickupLocation: pickupLocation.trim(), qrisUrl };
 }

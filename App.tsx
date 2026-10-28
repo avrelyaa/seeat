@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ImageSourcePropType, Keyboard, KeyboardAvoidingView, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import { useRouter } from 'expo-router';
+import { useAssets } from 'expo-asset';
 import { createUserWithEmailAndPassword, onAuthStateChanged, reload, sendEmailVerification, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
 import { auth, configured } from './src/firebase';
 import { formatSchedule, SchedulePicker } from './src/SchedulePicker';
 import { cancelUnpaidOrder, createProfile, getProfile, getProof, Listing, Order, Profile, reserveOrder, saveListing, saveShop, submitProof, updateOrderStatus, watchListings, watchOrders, watchSellerListings } from './src/data';
 import { getAdminAccess, Report, reportReasons, setListingVisible, setReportStatus, setSellerVerified, submitReport, watchAdminListings, watchReports, watchSellers } from './src/admin';
+import { NavIcon } from './src/NavIcon';
 
 const money = (n: number) => 'Rp' + n.toLocaleString('id-ID');
 const categories = ['All', 'Meals', 'Snacks', 'Desserts', 'Drinks'];
@@ -66,7 +67,14 @@ function FoodArt({ images = [], large = false }: { images?: string[]; large?: bo
 }
 
 export default function App({ screen = 'discover' }: { screen?: 'discover' | 'orders' | 'listings' | 'shop' | 'admin' }) {
-  const router = useRouter();
+  const [activeScreen, setActiveScreen] = useState(screen);
+  const [now, setNow] = useState(() => Date.now());
+  const [loadedArt, artError] = useAssets([
+    require('./assets/foodies/girl-cooking.png'), require('./assets/foodies/noodle-soup.png'),
+    require('./assets/foodies/meal-ingredients.png'), require('./assets/foodies/online-order.png'),
+    require('./assets/foodies/chef-menu.png'), require('./assets/foodies/grocery-shopping.png'),
+    require('./assets/food-placeholder.png'),
+  ]);
   const [user, setUser] = useState<User | null>(null), [profile, setProfile] = useState<Profile | null>(null);
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false);
   const [adminAccess, setAdminAccess] = useState(false);
@@ -77,22 +85,23 @@ export default function App({ screen = 'discover' }: { screen?: 'discover' | 'or
   async function run(action: () => Promise<void>) { setBusy(true); try { await action(); } catch (e) { errorMessage(e); } finally { setBusy(false); } }
   useEffect(() => onAuthStateChanged(auth, async u => { setReady(false); const p = u?.emailVerified ? await getProfile(u.uid).catch(() => null) : null; const access = u?.emailVerified ? await getAdminAccess(u.uid).catch(() => false) : false; setUser(u); setProfile(p); setAdminAccess(access); setReady(true); }), []);
   useEffect(() => { const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true)); const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false)); return () => { show.remove(); hide.remove(); }; }, []);
-  useEffect(() => { if (!profile) return; const fail = (e: Error) => errorMessage(e); const a = profile.role === 'seller' ? watchSellerListings(profile.id, setListings, fail) : watchListings(setListings, fail); const b = watchOrders(profile.role, profile.id, setOrders, fail); return () => { a(); b(); }; }, [profile?.id, profile?.role]);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(timer); }, []);
+  useEffect(() => { if (!profile) return; const fail = (e: Error) => errorMessage(e); const a = profile.role === 'seller' ? watchSellerListings(profile.id, setListings, fail) : watchListings(setListings, fail); const b = watchOrders(profile.role, profile.id, setOrders, fail); return () => { a(); b(); }; }, [profile]);
   useEffect(() => { if (profile?.role !== 'buyer') return; let active = true; Promise.all([...new Set(listings.map(item => item.sellerId))].map(async id => [id, Boolean((await getProfile(id))?.verified)] as const)).then(rows => { if (active) setVerifiedSellers(Object.fromEntries(rows)); }).catch(errorMessage); return () => { active = false; }; }, [listings, profile?.role]);
-  useEffect(() => { if (screen === 'admin' && !adminAccess) router.replace('/'); else if (profile?.role === 'seller' && screen === 'discover') router.replace('/listings'); else if (profile?.role === 'buyer' && (screen === 'listings' || screen === 'shop')) router.replace('/'); }, [profile?.role, screen, adminAccess]);
   if (!configured) return <SafeAreaView style={s.page}><View style={s.center}><Text style={s.logo}>seeat.</Text><Text style={s.title}>Connect Firebase</Text><Text style={s.muted}>Add your Firebase project values to .env.</Text></View></SafeAreaView>;
-  if (!ready) return <SafeAreaView style={s.page}><ActivityIndicator style={{ marginTop: 80 }} color="#D84F68" /></SafeAreaView>;
+  if (!ready || (!loadedArt && !artError)) return <SafeAreaView style={s.page}><ActivityIndicator style={{ marginTop: 80 }} color="#D84F68" /></SafeAreaView>;
   if (!user) return <Auth run={run} busy={busy} />;
   if (!user.emailVerified) return <SafeAreaView style={s.page}><View style={s.center}><Text style={s.logo}>seeat.</Text><Text style={s.title}>Verify your email</Text><Text style={s.muted}>We sent a link to {user.email}. Open it, then return here.</Text><Button label="I've verified my email" disabled={busy} press={() => run(async () => { await reload(user); if (!auth.currentUser?.emailVerified) throw new Error('Your email is not verified yet.'); setProfile(await getProfile(user.uid)); setAdminAccess(await getAdminAccess(user.uid).catch(() => false)); })} /><Button label="Resend email" quiet press={() => run(() => sendEmailVerification(user))} /><Button label="Sign out" quiet press={() => signOut(auth)} /></View></SafeAreaView>;
   if (!profile) return <Setup user={user} run={run} busy={busy} done={setProfile} />;
   const seller = profile.role === 'seller';
   const admin = adminAccess;
-  const visible = listings.filter(x => x.active && x.stock > 0 && (!x.preorderDeadline || Date.parse(x.preorderDeadline) > Date.now()) && (category === 'All' || x.category === category) && (x.name + x.sellerName).toLowerCase().includes(search.toLowerCase()));
+  const currentScreen = activeScreen === 'admin' && !admin ? (seller ? 'listings' : 'discover') : seller && activeScreen === 'discover' ? 'listings' : !seller && (activeScreen === 'listings' || activeScreen === 'shop') ? 'discover' : activeScreen;
+  const visible = listings.filter(x => x.active && x.stock > 0 && (!x.preorderDeadline || Date.parse(x.preorderDeadline) > now) && (category === 'All' || x.category === category) && (x.name + x.sellerName).toLowerCase().includes(search.toLowerCase()));
   return <SafeAreaView style={s.page}><KeyboardAvoidingView style={s.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={s.shell}>
     <View style={s.header}><Text style={s.logo}>seeat<Text style={{ color: '#D84F68' }}>.</Text></Text><View style={s.headerRight}><Pressable onPress={() => signOut(auth)}><Text style={s.signOut}>Sign out</Text></Pressable></View></View>
     <ScrollView style={s.flex} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-      {screen === 'admin' ? admin ? <AdminDashboard run={run} busy={busy} /> : null : seller ? screen === 'listings' ? <SellerFoods profile={profile} items={listings} run={run} busy={busy} /> : screen === 'orders' ? <Orders items={orders} profile={profile} run={run} busy={busy} /> : <Shop profile={profile} run={run} busy={busy} done={setProfile} /> :
-      screen === 'orders' ? <Orders items={orders} profile={profile} run={run} busy={busy} /> : <>
+      {currentScreen === 'admin' ? <AdminDashboard run={run} busy={busy} /> : seller ? currentScreen === 'listings' ? <SellerFoods profile={profile} items={listings} run={run} busy={busy} /> : currentScreen === 'orders' ? <Orders items={orders} profile={profile} run={run} busy={busy} /> : <Shop profile={profile} run={run} busy={busy} done={setProfile} /> :
+      currentScreen === 'orders' ? <Orders items={orders} profile={profile} run={run} busy={busy} /> : <>
         <Hero eyebrow="FRESH FINDS" title={'Good food,\nclose by.'} image={art.noodle} />
         <TextInput style={[s.input, s.search]} value={search} onChangeText={setSearch} placeholder="Search food or seller" placeholderTextColor="#A18E98" />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>{categories.map(c => <Pressable key={c} onPress={() => setCategory(c)} style={[s.chip, c === category && s.chipOn]}><Text style={[s.chipText, c === category && { color: 'white' }]}>{c}</Text></Pressable>)}</ScrollView>
@@ -101,17 +110,18 @@ export default function App({ screen = 'discover' }: { screen?: 'discover' | 'or
         {!visible.length && <Empty text="Nothing here yet" />}
       </>}
     </ScrollView>
-    {!keyboardVisible && <View style={s.nav}>{[...(seller ? [['listings', 'Menu'], ['orders', 'Orders'], ['shop', 'Shop']] : [['discover', 'Explore'], ['orders', 'Orders']]), ...(admin ? [['admin', 'Admin']] : [])].map(([key, label]) => <Pressable key={key} onPress={() => router.replace(key === 'discover' ? '/' : key === 'orders' ? '/orders' : key === 'listings' ? '/listings' : key === 'admin' ? '/admin' : '/shop')} style={[s.navItem, screen === key && s.navOn]}><Text style={[s.chipText, screen === key && { color: '#D84F68' }]}>{label}</Text></Pressable>)}</View>}
+    {!keyboardVisible && <View style={s.nav}>{([...(seller ? [['listings', 'Menu'], ['orders', 'Orders'], ['shop', 'Shop']] : [['discover', 'Explore'], ['orders', 'Orders']]), ...(admin ? [['admin', 'Admin']] : [])] as [typeof activeScreen, string][]).map(([key, label]) => <Pressable key={key} accessibilityRole="tab" accessibilityLabel={label} accessibilityState={{ selected: currentScreen === key }} onPress={() => { setSelected(null); setActiveScreen(key); }} style={[s.navItem, currentScreen === key && s.navOn]}><NavIcon name={key} selected={currentScreen === key} /><Text style={[s.navLabel, currentScreen === key && s.navLabelOn]}>{label}</Text></Pressable>)}</View>}
   </View>
-  {selected && <ProductSheet item={selected} buyer={profile} verified={verifiedSellers[selected.sellerId]} run={run} busy={busy} close={() => setSelected(null)} ordered={() => { setSelected(null); router.push('/orders'); }} />}
+  {selected && <ProductSheet item={selected} buyer={profile} verified={verifiedSellers[selected.sellerId]} run={run} busy={busy} close={() => setSelected(null)} ordered={() => { setSelected(null); setActiveScreen('orders'); }} />}
   </KeyboardAvoidingView></SafeAreaView>;
 }
 
 function Empty({ text, image = foodPlaceholder }: { text: string; image?: ImageSourcePropType }) { return <View style={s.empty}><Image source={image} style={s.emptyArt} resizeMode={image === foodPlaceholder ? 'cover' : 'contain'} /><Text style={s.cardTitle}>{text}</Text></View>; }
+function CloseButton({ onPress, label = 'Close' }: { onPress: () => void; label?: string }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} hitSlop={6} onPress={onPress} style={s.roundX}><Text style={s.xGlyph}>×</Text></Pressable>; }
 function ProductSheet({ item, buyer, verified, run, busy, close, ordered }: { item: Listing; buyer: Profile; verified?: boolean; run: (f: () => Promise<void>) => void; busy: boolean; close: () => void; ordered: () => void }) {
   const [reporting, setReporting] = useState(false);
-  return <View style={s.overlay}><ScrollView style={s.sheet} contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
-    <Pressable onPress={close}><Text style={s.link}>Close ×</Text></Pressable>
+  return <View style={s.overlay}><Pressable accessibilityLabel="Close product details" onPress={close} style={StyleSheet.absoluteFill} /><ScrollView style={s.sheet} contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
+    <View style={s.sheetTop}><CloseButton onPress={close} /></View>
     <FoodArt images={item.images} large />
     <Text style={s.overline}>{item.category.toUpperCase()}</Text>
     <Text style={s.title}>{item.name}</Text>
@@ -190,17 +200,17 @@ function ListingEditor({ profile, item, run, busy, close }: { profile: Profile; 
   const [name, setName] = useState(item?.name || ''), [category, setCategory] = useState(item?.category || 'Meals'), [price, setPrice] = useState(String(item?.price || '')), [stock, setStock] = useState(String(item?.stock ?? '')), [pickup, setPickup] = useState(item?.pickupLocation || profile.pickupLocation || ''), [deadline, setDeadline] = useState(item?.preorderDeadline || ''), [pickupTime, setPickupTime] = useState(item?.pickupTime || '');
   const [images, setImages] = useState<string[]>(item?.images || []);
   return <View style={s.editor}>
-    <View style={s.sectionRow}><Text style={s.section}>{item ? 'Edit food' : 'Add food'}</Text><Pressable onPress={close}><Text style={s.link}>Close ×</Text></Pressable></View>
+    <View style={s.sectionRow}><Text style={s.section}>{item ? 'Edit food' : 'Add food'}</Text><CloseButton onPress={close} label="Close food editor" /></View>
     <Field label="Food name" value={name} change={setName} hint="What are you making?" />
-    <Text style={s.label}>Photos · up to 3</Text>
+    <Text style={[s.label, s.formSectionLabel]}>Photos · up to 3</Text>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.photoStrip}>
       {(images.length ? images : [undefined]).map((uri, index) => <View key={index} style={s.photoTile}>
         <Image source={uri ? { uri } : foodPlaceholder} style={s.photoPreview} resizeMode="cover" />
-        {uri && <Pressable accessibilityRole="button" onPress={() => setImages(images.filter((_, at) => at !== index))} style={s.photoRemove}><Text style={s.photoRemoveText}>Remove</Text></Pressable>}
+        {uri && <Pressable accessibilityRole="button" accessibilityLabel={`Remove photo ${index + 1}`} hitSlop={8} onPress={() => setImages(images.filter((_, at) => at !== index))} style={s.photoX}><Text style={s.xGlyph}>×</Text></Pressable>}
       </View>)}
     </ScrollView>
     {images.length < 3 && <Button label="Add photo" quiet disabled={busy} press={() => run(async () => { const uri = await chooseFoodImage(); if (uri) setImages(current => current.length < 3 ? [...current, uri] : current); })} />}
-    <Text style={s.label}>Category</Text><View style={s.row}>{categories.slice(1).map(c => <Pressable key={c} onPress={() => setCategory(c)} style={[s.chip, c === category && s.chipOn]}><Text style={[s.chipText, c === category && { color: 'white' }]}>{c}</Text></Pressable>)}</View>
+    <Text style={[s.label, s.formSectionLabel]}>Category</Text><View style={s.row}>{categories.slice(1).map(c => <Pressable key={c} onPress={() => setCategory(c)} style={[s.chip, c === category && s.chipOn]}><Text style={[s.chipText, c === category && { color: 'white' }]}>{c}</Text></Pressable>)}</View>
     <View style={s.twoFields}><View style={{ flex: 1 }}><Field label="Price (Rp)" value={price} change={setPrice} numeric /></View><View style={{ flex: 1 }}><Field label="Portions" value={stock} change={setStock} numeric /></View></View>
     <Field label="Pickup spot" value={pickup} change={setPickup} hint="e.g. Main entrance" />
     <Text style={s.scheduleTitle}>Schedule · optional</Text><SchedulePicker label="Pickup time" value={pickupTime} onChange={setPickupTime} /><SchedulePicker label="Pre-order closes" value={deadline} onChange={setDeadline} />
@@ -209,7 +219,9 @@ function ListingEditor({ profile, item, run, busy, close }: { profile: Profile; 
 }
 function Shop({ profile, run, busy, done }: { profile: Profile; run: (f: () => Promise<void>) => void; busy: boolean; done: (p: Profile) => void }) {
   const [name, setName] = useState(profile.shopName || ''), [pickup, setPickup] = useState(profile.pickupLocation || ''), [uri, setUri] = useState<string | undefined>();
-  return <><Hero eyebrow="YOUR STOREFRONT" title={'Make it\nyours.'} image={art.grocery} /><Field label="Shop name" value={name} change={setName} /><Field label="Default pickup spot" value={pickup} change={setPickup} /><View style={s.qrisCard}><Text style={s.section}>Your QRIS</Text>{(uri || profile.qrisUrl) ? <Image source={{ uri: uri || profile.qrisUrl }} style={s.qris} resizeMode="contain" /> : <Text style={s.muted}>Add your QRIS for direct payment.</Text>}<Button label={uri || profile.qrisUrl ? 'Replace QRIS image' : 'Add QRIS image'} quiet press={() => run(async () => setUri(await chooseImage()))} /></View><Button label="Save shop" disabled={busy} press={() => run(async () => { if (!name.trim() || !pickup.trim()) throw new Error('Add a shop name and pickup spot.'); done(await saveShop(profile, name, pickup, uri)); setUri(undefined); })} /></>;
+  const [removeQris, setRemoveQris] = useState(false);
+  const displayedQris = removeQris ? undefined : uri || profile.qrisUrl;
+  return <><Hero eyebrow="YOUR STOREFRONT" title={'Make it\nyours.'} image={art.grocery} /><Field label="Shop name" value={name} change={setName} /><Field label="Default pickup spot" value={pickup} change={setPickup} /><View style={s.qrisCard}><Text style={s.section}>Your QRIS</Text>{displayedQris ? <View style={s.qrisWrap}><Image source={{ uri: displayedQris }} style={s.qris} resizeMode="contain" /><Pressable accessibilityRole="button" accessibilityLabel="Remove QRIS image" hitSlop={8} onPress={() => { setUri(undefined); setRemoveQris(true); }} style={[s.photoX, s.qrisX]}><Text style={s.xGlyph}>×</Text></Pressable></View> : <Text style={s.muted}>Add your QRIS for direct payment.</Text>}<Button label={displayedQris ? 'Replace QRIS image' : 'Add QRIS image'} quiet press={() => run(async () => { const image = await chooseImage(); if (image) { setUri(image); setRemoveQris(false); } })} /></View><Button label="Save shop" disabled={busy} press={() => run(async () => { if (!name.trim() || !pickup.trim()) throw new Error('Add a shop name and pickup spot.'); done(await saveShop(profile, name, pickup, removeQris ? null : uri)); setUri(undefined); setRemoveQris(false); })} /></>;
 }
 function AdminDashboard({ run, busy }: { run: (f: () => Promise<void>) => void; busy: boolean }) {
   const [sellers, setSellers] = useState<Profile[]>([]), [reports, setReports] = useState<Report[]>([]), [foods, setFoods] = useState<Listing[]>([]);
@@ -245,7 +257,7 @@ function AdminDashboard({ run, busy }: { run: (f: () => Promise<void>) => void; 
 }
 const s = StyleSheet.create({
   flex: { flex: 1 },
-  page: { flex: 1, backgroundColor: '#FFFAF8' }, shell: { flex: 1, maxWidth: 640, width: '100%', alignSelf: 'center' }, header: { paddingHorizontal: 22, paddingVertical: 15, borderBottomWidth: 0, borderColor: '#F0E4E5', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, content: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 48 }, logo: { color: '#3B1831', fontWeight: '900', fontSize: 31, letterSpacing: -2 }, title: { color: '#3B1831', fontSize: 30, fontWeight: '800', marginBottom: 10 }, section: { color: '#3B1831', fontSize: 19, fontWeight: '800', marginTop: 16, marginBottom: 12 }, overline: { color: '#D84F68', fontWeight: '800', fontSize: 11, letterSpacing: 1.5, marginBottom: 8 }, muted: { color: '#806F79', fontSize: 14, lineHeight: 21 }, body: { color: '#6F5A67', marginTop: 12, lineHeight: 21 }, label: { color: '#3B1831', fontWeight: '700', fontSize: 13, marginBottom: 7 }, input: { backgroundColor: 'white', borderWidth: 1, borderColor: '#F0E4E5', borderRadius: 12, padding: 14, fontSize: 15, color: '#3B1831' }, button: { backgroundColor: '#D84F68', borderRadius: 12, padding: 15, alignItems: 'center', marginTop: 16 }, buttonText: { color: 'white', fontWeight: '800', fontSize: 15 }, quiet: { backgroundColor: 'white', borderWidth: 1, borderColor: '#F0E4E5' }, link: { color: '#D84F68', fontWeight: '700' }, chips: { gap: 8, paddingVertical: 18 }, chip: { borderWidth: 1, borderColor: '#F0E4E5', backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 14, paddingVertical: 9 }, chipOn: { backgroundColor: '#3B1831', borderColor: '#3B1831' }, chipText: { color: '#765E6C', fontWeight: '700' }, card: { flexDirection: 'row', gap: 14, backgroundColor: 'white', borderRadius: 19, padding: 10, marginBottom: 11, borderWidth: 1, borderColor: '#F0E4E5' }, emoji: { backgroundColor: '#FCECDF', borderRadius: 12, width: 90, height: 95, textAlign: 'center', textAlignVertical: 'center', fontSize: 38, overflow: 'hidden' }, cardTitle: { color: '#3B1831', fontSize: 17, fontWeight: '800', marginBottom: 4 }, price: { color: '#D84F68', fontSize: 18, fontWeight: '800', marginTop: 10 }, green: { color: '#2D8E4C', fontWeight: '700', marginTop: 5 }, empty: { padding: 28, alignItems: 'center', backgroundColor: 'white', borderRadius: 16, marginTop: 18, gap: 10 }, nav: { flexDirection: 'row', padding: 10, backgroundColor: 'white', borderTopWidth: 1, borderColor: '#F0E4E5' }, navItem: { flex: 1, padding: 12, alignItems: 'center', borderRadius: 12 }, navOn: { backgroundColor: '#FDECEF' }, overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(20,32,24,.5)', justifyContent: 'flex-end' }, sheet: { backgroundColor: '#FFFAF8', maxHeight: '92%', borderTopLeftRadius: 22, borderTopRightRadius: 22 }, foot: { color: '#899087', fontSize: 12, lineHeight: 18, marginTop: 16 }, order: { backgroundColor: 'white', borderRadius: 16, padding: 18, marginTop: 14, borderWidth: 1, borderColor: '#F0E4E5' }, badge: { color: '#9C6334', backgroundColor: '#FFF0D9', alignSelf: 'flex-start', padding: 7, borderRadius: 7, overflow: 'hidden', marginTop: 10, fontWeight: '700' }, qris: { width: 210, height: 210, backgroundColor: 'white', alignSelf: 'center', marginTop: 15 }, editor: { backgroundColor: '#FFF3F2', borderRadius: 20, padding: 17, marginTop: 6, marginBottom: 18 }, row: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 13 }, choice: { flex: 1, backgroundColor: 'white', borderColor: '#F0E4E5', borderWidth: 1, padding: 14, borderRadius: 12, alignItems: 'center' }, choiceOn: { borderColor: '#D84F68', backgroundColor: '#FDECEF' }, auth: { backgroundColor: 'white', borderColor: '#F0E4E5', borderWidth: 1, borderRadius: 22, padding: 24 }, center: { flex: 1, maxWidth: 460, width: '100%', alignSelf: 'center', justifyContent: 'center', padding: 28, gap: 10 },
+  page: { flex: 1, backgroundColor: '#FFFAF8' }, shell: { flex: 1, maxWidth: 640, width: '100%', alignSelf: 'center' }, header: { paddingHorizontal: 22, paddingVertical: 15, borderBottomWidth: 0, borderColor: '#F0E4E5', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, content: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 48 }, logo: { color: '#3B1831', fontWeight: '900', fontSize: 31, letterSpacing: -2 }, title: { color: '#3B1831', fontSize: 30, fontWeight: '800', marginBottom: 10 }, section: { color: '#3B1831', fontSize: 19, fontWeight: '800', marginTop: 16, marginBottom: 12 }, overline: { color: '#D84F68', fontWeight: '800', fontSize: 11, letterSpacing: 1.5, marginBottom: 8 }, muted: { color: '#806F79', fontSize: 14, lineHeight: 21 }, body: { color: '#6F5A67', marginTop: 12, lineHeight: 21 }, label: { color: '#3B1831', fontWeight: '700', fontSize: 13, marginBottom: 7 }, input: { backgroundColor: 'white', borderWidth: 1, borderColor: '#F0E4E5', borderRadius: 12, padding: 14, fontSize: 15, color: '#3B1831' }, button: { backgroundColor: '#D84F68', borderRadius: 12, padding: 15, alignItems: 'center', marginTop: 16 }, buttonText: { color: 'white', fontWeight: '800', fontSize: 15 }, quiet: { backgroundColor: 'white', borderWidth: 1, borderColor: '#F0E4E5' }, link: { color: '#D84F68', fontWeight: '700' }, chips: { gap: 8, paddingVertical: 18 }, chip: { borderWidth: 1, borderColor: '#F0E4E5', backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 14, paddingVertical: 9 }, chipOn: { backgroundColor: '#3B1831', borderColor: '#3B1831' }, chipText: { color: '#765E6C', fontWeight: '700' }, card: { flexDirection: 'row', gap: 14, backgroundColor: 'white', borderRadius: 19, padding: 10, marginBottom: 11, borderWidth: 1, borderColor: '#F0E4E5' }, emoji: { backgroundColor: '#FCECDF', borderRadius: 12, width: 90, height: 95, textAlign: 'center', textAlignVertical: 'center', fontSize: 38, overflow: 'hidden' }, cardTitle: { color: '#3B1831', fontSize: 17, fontWeight: '800', marginBottom: 4 }, price: { color: '#D84F68', fontSize: 18, fontWeight: '800', marginTop: 10 }, green: { color: '#2D8E4C', fontWeight: '700', marginTop: 5 }, empty: { padding: 28, alignItems: 'center', backgroundColor: 'white', borderRadius: 16, marginTop: 18, gap: 10 }, nav: { flexDirection: 'row', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'white', borderTopWidth: 1, borderColor: '#F0E4E5' }, navItem: { flex: 1, minHeight: 53, paddingVertical: 5, alignItems: 'center', justifyContent: 'center', borderRadius: 12, gap: 2 }, navOn: { backgroundColor: '#FDECEF' }, navLabel: { color: '#76636F', fontSize: 11, fontWeight: '700' }, navLabelOn: { color: '#D84F68' }, overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(20,32,24,.5)', justifyContent: 'flex-end' }, sheet: { backgroundColor: '#FFFAF8', maxHeight: '92%', borderTopLeftRadius: 22, borderTopRightRadius: 22 }, foot: { color: '#899087', fontSize: 12, lineHeight: 18, marginTop: 16 }, order: { backgroundColor: 'white', borderRadius: 16, padding: 18, marginTop: 14, borderWidth: 1, borderColor: '#F0E4E5' }, badge: { color: '#9C6334', backgroundColor: '#FFF0D9', alignSelf: 'flex-start', padding: 7, borderRadius: 7, overflow: 'hidden', marginTop: 10, fontWeight: '700' }, qris: { width: 210, height: 210, backgroundColor: 'white', alignSelf: 'center', marginTop: 15 }, editor: { backgroundColor: '#FFF3F2', borderRadius: 20, padding: 17, marginTop: 6, marginBottom: 18 }, row: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 13 }, choice: { flex: 1, backgroundColor: 'white', borderColor: '#F0E4E5', borderWidth: 1, padding: 14, borderRadius: 12, alignItems: 'center' }, choiceOn: { borderColor: '#D84F68', backgroundColor: '#FDECEF' }, auth: { backgroundColor: 'white', borderWidth: 1, borderColor: '#F0E4E5', borderRadius: 22, padding: 24 }, center: { flex: 1, maxWidth: 460, width: '100%', alignSelf: 'center', justifyContent: 'center', padding: 28, gap: 10 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   signOut: { color: '#806F79', fontSize: 12, fontWeight: '700' },
   hero: { minHeight: 178, backgroundColor: '#FBE1E7', borderRadius: 24, overflow: 'hidden', marginBottom: 22 },
@@ -263,10 +275,15 @@ const s = StyleSheet.create({
   galleryCount: { position: 'absolute', right: 10, bottom: 10, color: '#FFFFFF', backgroundColor: '#3B1831', overflow: 'hidden', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 12, fontSize: 11, fontWeight: '800' },
   emptyArt: { width: 145, height: 130, borderRadius: 14 },
   photoStrip: { gap: 10, paddingVertical: 6 },
-  photoTile: { width: 112 },
+  photoTile: { width: 112, position: 'relative' },
   photoPreview: { width: 112, height: 112, borderRadius: 13, backgroundColor: '#F7DDE9' },
-  photoRemove: { paddingVertical: 7, alignItems: 'center' },
-  photoRemoveText: { color: '#B7445E', fontSize: 12, fontWeight: '700' },
+  formSectionLabel: { marginTop: 22, marginBottom: 10 },
+  roundX: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E9D6DC' },
+  photoX: { position: 'absolute', top: 5, right: 5, width: 28, height: 28, borderRadius: 14, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E9D6DC' },
+  qrisX: { top: 20 },
+  xGlyph: { color: '#3B1831', fontSize: 20, lineHeight: 23, fontWeight: '600' },
+  sheetTop: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 },
+  qrisWrap: { width: 210, alignSelf: 'center', position: 'relative' },
   detailInfo: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#F0E4E5', paddingVertical: 6, marginTop: 17 },
   orderForm: { marginTop: 17 },
   stepper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#F0E4E5', backgroundColor: 'white', borderRadius: 12 },

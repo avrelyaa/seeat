@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 const require = createRequire(import.meta.url);
 const { initializeTestEnvironment, assertFails, assertSucceeds } = require('@firebase/rules-unit-testing');
+const { deleteField } = require('firebase/firestore');
 const doc = (firestore, path) => firestore.doc(path);
 const getDoc = ref => ref.get();
 const setDoc = (ref, data) => ref.set(data);
@@ -36,6 +37,9 @@ test('marketplace rules enforce verified users, reserved stock, and cancellation
     const orderPath = 'orders/order-1';
     await assertSucceeds(setDoc(doc(seller, 'users/seller-1'), { id: 'seller-1', name: 'Seller', role: 'seller' }));
     await assertSucceeds(setDoc(doc(buyer, 'users/buyer-1'), { id: 'buyer-1', name: 'Buyer', role: 'buyer' }));
+    await assertSucceeds(updateDoc(doc(seller, 'users/seller-1'), { shopName: 'Shop', pickupLocation: 'Entrance', qrisUrl: 'data:image/jpeg;base64,AAAA' }));
+    await assertSucceeds(updateDoc(doc(seller, 'users/seller-1'), { qrisUrl: deleteField() }));
+    assert.equal((await getDoc(doc(seller, 'users/seller-1'))).data().qrisUrl, undefined);
     const listing = {
       sellerId: 'seller-1', sellerName: 'Shop', name: 'Rice bowl',
       category: 'Meals', price: 15000, stock: 3, description: 'Fresh rice bowl',

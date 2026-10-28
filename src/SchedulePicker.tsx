@@ -1,8 +1,29 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 const hours = Array.from({ length: 24 }, (_, index) => index);
 const minutes = Array.from({ length: 60 }, (_, index) => index);
+const wheelRow = 44;
+
+function TimeWheel({ label, values, value, onChange }: { label: string; values: number[]; value: number; onChange: (value: number) => void }) {
+  const ref = useRef<ScrollViewInstance>(null);
+  useEffect(() => { ref.current?.scrollTo({ y: value * wheelRow, animated: false }); }, [value]);
+  function settle(offset: number) {
+    const index = Math.max(0, Math.min(values.length - 1, Math.round(offset / wheelRow)));
+    if (values[index] !== value) onChange(values[index]);
+  }
+  return <View style={s.wheelColumn}>
+    <Text style={s.wheelLabel}>{label}</Text>
+    <View style={s.wheelFrame}>
+      <View pointerEvents="none" style={s.wheelHighlight} />
+      <ScrollView ref={ref} style={s.wheel} contentContainerStyle={s.wheelContent} snapToInterval={wheelRow} decelerationRate="fast" nestedScrollEnabled showsVerticalScrollIndicator={false} onMomentumScrollEnd={event => settle(event.nativeEvent.contentOffset.y)} onScrollEndDrag={event => { if (!event.nativeEvent.velocity?.y) settle(event.nativeEvent.contentOffset.y); }}>
+        {values.map(number => <Pressable key={number} accessibilityRole="button" accessibilityLabel={`${label} ${String(number).padStart(2, '0')}`} onPress={() => { ref.current?.scrollTo({ y: number * wheelRow, animated: true }); onChange(number); }} style={s.wheelItem}>
+          <Text style={[s.wheelNumber, number === value && s.wheelNumberSelected]}>{String(number).padStart(2, '0')}</Text>
+        </Pressable>)}
+      </ScrollView>
+    </View>
+  </View>;
+}
 
 function startOfDay(date: Date) {
   const day = new Date(date);
@@ -99,18 +120,11 @@ export function SchedulePicker({
           <Text style={[s.dayNumber, selected && sameDay(selected, day) && s.selectedText]}>{day.getDate()}</Text>
         </Pressable>)}
       </ScrollView>
-      <Text style={[s.subLabel, s.timeLabel]}>HOUR</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hours}>
-        {hours.map(hour => <Pressable key={hour} onPress={() => chooseHour(hour)} style={[s.hour, selected?.getHours() === hour && s.selected]}>
-          <Text style={[s.hourText, selected?.getHours() === hour && s.selectedText]}>{String(hour).padStart(2, '0')}</Text>
-        </Pressable>)}
-      </ScrollView>
-      <Text style={[s.subLabel, s.timeLabel]}>MINUTE</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.minutes}>
-        {minutes.map(minute => <Pressable key={minute} onPress={() => chooseMinute(minute)} style={[s.hour, selected?.getMinutes() === minute && s.selected]}>
-          <Text style={[s.hourText, selected?.getMinutes() === minute && s.selectedText]}>{String(minute).padStart(2, '0')}</Text>
-        </Pressable>)}
-      </ScrollView>
+      <View style={s.timeWheels}>
+        <TimeWheel label="Hour" values={hours} value={choice.getHours()} onChange={chooseHour} />
+        <Text style={s.timeColon}>:</Text>
+        <TimeWheel label="Minute" values={minutes} value={choice.getMinutes()} onChange={chooseMinute} />
+      </View>
     </View>}
   </View>;
 }
@@ -138,9 +152,15 @@ const s = StyleSheet.create({
   selectedText: { color: '#FFFFFF' },
   dayName: { color: '#8E727B', fontSize: 11, fontWeight: '600' },
   dayNumber: { color: '#3E1732', fontSize: 18, fontWeight: '800', marginTop: 2 },
-  timeLabel: { marginLeft: 15, marginTop: 19 },
-  hours: { gap: 7, paddingHorizontal: 15, paddingTop: 10 },
-  hour: { minWidth: 50, paddingVertical: 9, borderRadius: 10, alignItems: 'center', backgroundColor: '#FFFFFF' },
-  hourText: { color: '#4A3041', fontSize: 13, fontWeight: '700' },
-  minutes: { gap: 7, paddingHorizontal: 15, paddingTop: 10 },
+  timeWheels: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 20, paddingHorizontal: 15 },
+  wheelColumn: { alignItems: 'center', width: 92 },
+  wheelLabel: { color: '#8D6977', fontSize: 11, fontWeight: '800', marginBottom: 8 },
+  wheelFrame: { width: 92, height: 132, borderRadius: 14, overflow: 'hidden', backgroundColor: '#FFFFFF' },
+  wheel: { flex: 1 },
+  wheelContent: { paddingVertical: wheelRow },
+  wheelHighlight: { position: 'absolute', left: 4, right: 4, top: wheelRow, height: wheelRow, borderRadius: 10, backgroundColor: '#FDECEF' },
+  wheelItem: { height: wheelRow, alignItems: 'center', justifyContent: 'center' },
+  wheelNumber: { color: '#9C8793', fontSize: 18, fontWeight: '600' },
+  wheelNumberSelected: { color: '#3B1831', fontWeight: '900' },
+  timeColon: { color: '#3B1831', fontSize: 25, fontWeight: '800', marginTop: 18 },
 });
