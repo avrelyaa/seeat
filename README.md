@@ -1,16 +1,18 @@
 # Seeat
 
-Seeat is a BINUS mobile food marketplace built with Expo and Firebase for Android and iOS. This is an independent project in its own repository. Any verified email may register; BINUS is the default marketplace location, not an identity check.
+Seeat is a mobile food marketplace built with Expo and Firebase for Android and iOS. Buyers discover food from independent sellers, order ahead, and coordinate pickup. Any verified email may register.
 
 ## Implemented starter flows
 
 - Buyer and seller sign-up with email verification
 - Food discovery by search and category
 - Seller storefront settings, QRIS image, food listings, pre-order deadline, and manual stock editing
+- Up to three swipeable food photos per listing, with a separate illustrated placeholder when no photo is uploaded
 - Transactional stock reservation when a buyer orders
 - Direct seller QRIS display, buyer proof submission for online orders, optional proof for on-site orders, seller payment confirmation, and order status tracking
 - Buyer cancellation of unpaid orders with transactional stock restoration
 - Firebase Authentication, Cloud Firestore, and access rules
+- Owner admin tools for seller verification, listing moderation, and report resolution
 
 This is a working code starter, **not a deployed or production-ready service**. The Firebase project is connected and security rules are published, but signed native builds and real user testing are still required.
 
@@ -31,13 +33,17 @@ Firebase web configuration values are public app identifiers; Firestore rules en
 
 ## No-billing image storage
 
-Seeat's pilot stores compressed QRIS and proof images in Firestore. It resizes selected images, saves them as JPEG data URLs, and rejects an encoded image over 700,000 characters. Payment proof lives in a separate `proofs/{orderId}` document readable only by the buyer and seller. This avoids Cloud Storage billing, but it consumes Firestore document storage and read bandwidth. Cloud Firestore limits a document to 1 MiB. Keep an eye on Spark plan quotas, and move images to a dedicated storage service before wider use.
+Seeat's pilot stores compressed QRIS, proof, and food images in Firestore. Food listings allow up to three JPEG images of under 250,000 characters each. Payment proof lives in a separate `proofs/{orderId}` document readable only by the buyer and seller. This avoids Cloud Storage billing, but it consumes Firestore document storage and read bandwidth. Cloud Firestore limits a document to 1 MiB. Keep an eye on Spark plan quotas, and move food photos to a dedicated storage service before wider use.
+
+## Admin access
+
+The account owner creates an `admins/{uid}` document in Firebase Console for their verified Firebase Authentication user. Only the Firebase Console can create this record; client apps cannot grant themselves admin access. That user then sees an **Admin** tab and can verify or unverify sellers, review and resolve reports, and hide or restore listings. The app does not contain a shared admin password; use the account's normal Firebase sign-in. Email sign-in remains the only supported login method until a private username lookup service is available.
 
 ## Optional mobile web release
 
 1. Log in and select the Firebase project: `npx firebase-tools@latest login`, then `npx firebase-tools@latest use --add`.
 2. Run `npm run typecheck` and `npm run build:web`.
-3. Test rules and flows against the Firebase Emulator Suite before real student use.
+3. Test rules and flows against the Firebase Emulator Suite before public use.
 4. Deploy rules and web assets: `npx firebase-tools@latest deploy --only firestore:rules,hosting`.
 
 Firebase Hosting serves the web build at the project's `web.app` address. Android and iOS store binaries require separate Expo EAS builds, signing, and store accounts.
@@ -46,11 +52,11 @@ Firebase Hosting serves the web build at the project's `web.app` address. Androi
 
 `eas.json` contains an internal preview profile and a production profile. Sign in with an Expo account (`npx eas-cli@latest login`), link this directory to an EAS project (`npx eas-cli@latest init`), choose stable Android and iOS application IDs, and put the four `EXPO_PUBLIC_FIREBASE_*` values in the matching EAS environments. Use `npx eas-cli@latest build --platform all --profile preview` for tester builds, then `--profile production` for store binaries. iOS device distribution requires an Apple Developer account; publishing to Google Play requires a Play Console account. The account owner must handle store agreements and signing credentials.
 
-## Before a campus launch
+## Before a wider launch
 
 - Add automatic expiry for abandoned unpaid reservations. Manual cancellation already restores stock atomically.
-- Any verified email may register. BINUS is a listing location, not verified student identity.
-- Add seller approval and a reporting/moderation process if the optional admin role is adopted.
+- Existing listings with a legacy `campus` field remain readable and editable. New listings no longer set a campus.
+- Define a seller verification checklist and report response process before broader use.
 - Validate Firestore rules in the emulator with malicious-client cases.
 - Add food photos, notifications, clearer pickup scheduling, and accessibility review.
 - Confirm payment operationally: screenshots do **not** prove a QRIS transfer settled.

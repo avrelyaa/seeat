@@ -21,16 +21,25 @@ test('marketplace rules enforce verified users, reserved stock, and cancellation
     const buyer = env.authenticatedContext('buyer-1', { email: 'buyer@example.com', email_verified: true }).firestore();
     const seller = env.authenticatedContext('seller-1', { email: 'seller@example.com', email_verified: true }).firestore();
     const stranger = env.authenticatedContext('stranger', { email: 'stranger@example.com', email_verified: true }).firestore();
+    const admin = env.authenticatedContext('owner-1', { email: 'owner@example.com', email_verified: true }).firestore();
+    const unverifiedAdmin = env.authenticatedContext('owner-2', { email: 'owner2@example.com', email_verified: false }).firestore();
     const unverified = env.authenticatedContext('unverified', { email: 'bad@example.com', email_verified: false }).firestore();
     const anonymous = env.unauthenticatedContext().firestore();
+    await env.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'admins/owner-1'), { createdAt: 1 });
+      await setDoc(doc(context.firestore(), 'admins/owner-2'), { createdAt: 1 });
+    });
+    await assertFails(setDoc(doc(buyer, 'admins/buyer-1'), { createdAt: 1 }));
+    await assertSucceeds(getDoc(doc(admin, 'admins/owner-1')));
+    await assertFails(getDoc(doc(unverifiedAdmin, 'admins/owner-2')));
     const listingPath = 'listings/food-1';
     const orderPath = 'orders/order-1';
     await assertSucceeds(setDoc(doc(seller, 'users/seller-1'), { id: 'seller-1', name: 'Seller', role: 'seller' }));
     await assertSucceeds(setDoc(doc(buyer, 'users/buyer-1'), { id: 'buyer-1', name: 'Buyer', role: 'buyer' }));
     const listing = {
-      campus: 'BINUS', sellerId: 'seller-1', sellerName: 'Shop', name: 'Rice bowl',
+      sellerId: 'seller-1', sellerName: 'Shop', name: 'Rice bowl',
       category: 'Meals', price: 15000, stock: 3, description: 'Fresh rice bowl',
-      pickupLocation: 'BINUS lobby', preorderDeadline: '', pickupTime: '',
+      pickupLocation: 'Main entrance', preorderDeadline: '', pickupTime: '',
       active: true, createdAt: 1,
     };
     await assertSucceeds(setDoc(doc(seller, listingPath), listing));
@@ -39,11 +48,36 @@ test('marketplace rules enforce verified users, reserved stock, and cancellation
     await assertSucceeds(getDoc(doc(buyer, listingPath)));
     await assertFails(updateDoc(doc(buyer, listingPath), { stock: 0 }));
     await assertFails(updateDoc(doc(stranger, listingPath), { price: 1 }));
+    await assertSucceeds(updateDoc(doc(seller, listingPath), { images: ['data:image/jpeg;base64,AAAA'] }));
+    await assertFails(updateDoc(doc(seller, listingPath), { images: ['not-an-image'] }));
+    await assertFails(updateDoc(doc(seller, listingPath), { images: Array(4).fill('data:image/jpeg;base64,AAAA') }));
+    await assertFails(updateDoc(doc(seller, 'users/seller-1'), { verified: true }));
+    await assertFails(updateDoc(doc(unverifiedAdmin, 'users/seller-1'), { verified: true }));
+    await assertSucceeds(updateDoc(doc(admin, 'users/seller-1'), { verified: true }));
+    assert.equal((await getDoc(doc(buyer, 'users/seller-1'))).data().verified, true);
+    await assertFails(stranger.collection('users').get());
+    await assertSucceeds(admin.collection('users').where('role', '==', 'seller').get());
+    await assertFails(updateDoc(doc(seller, listingPath), { active: false }));
+    await assertSucceeds(updateDoc(doc(admin, listingPath), { active: false }));
+    await assertSucceeds(updateDoc(doc(admin, listingPath), { active: true }));
+    const reportPath = 'reports/report-1';
+    const report = { reporterId: 'buyer-1', sellerId: 'seller-1', listingId: 'food-1', foodName: 'Rice bowl', reason: 'Food safety', status: 'open', createdAt: 1, updatedAt: 1 };
+    await assertFails(setDoc(doc(stranger, reportPath), report));
+    await assertSucceeds(setDoc(doc(buyer, reportPath), report));
+    await assertFails(stranger.collection('reports').get());
+    await assertSucceeds(admin.collection('reports').get());
+    await assertFails(updateDoc(doc(buyer, reportPath), { status: 'resolved', updatedAt: 2 }));
+    await assertSucceeds(updateDoc(doc(admin, reportPath), { status: 'resolved', updatedAt: 2 }));
+    const legacyPath = 'listings/legacy-food';
+    await env.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), legacyPath), { ...listing, campus: 'BINUS' });
+    });
+    await assertSucceeds(updateDoc(doc(seller, legacyPath), { price: 16000 }));
 
     const order = {
       buyerId: 'buyer-1', buyerName: 'Buyer', sellerId: 'seller-1', sellerName: 'Shop',
       listingId: 'food-1', foodName: 'Rice bowl', unitPrice: 15000, quantity: 2,
-      total: 30000, pickupLocation: 'BINUS lobby', pickupTime: '',
+      total: 30000, pickupLocation: 'Main entrance', pickupTime: '',
       purchaseType: 'online', status: 'pending_payment', createdAt: 2, updatedAt: 2,
     };
     await assertSucceeds(runTransaction(buyer, async tx => {

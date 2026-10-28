@@ -2,8 +2,8 @@ import { User } from 'firebase/auth';
 import { collection, doc, getDoc, onSnapshot, query, runTransaction, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 
-export type Profile = { id: string; name: string; role: 'buyer' | 'seller'; shopName?: string; pickupLocation?: string; qrisUrl?: string };
-export type Listing = { id: string; campus: 'BINUS'; sellerId: string; sellerName: string; name: string; category: string; price: number; stock: number; description: string; pickupLocation: string; preorderDeadline?: string; pickupTime?: string; active: boolean; createdAt: number; lastOrderId?: string };
+export type Profile = { id: string; name: string; role: 'buyer' | 'seller'; shopName?: string; pickupLocation?: string; qrisUrl?: string; verified?: boolean };
+export type Listing = { id: string; sellerId: string; sellerName: string; name: string; category: string; price: number; stock: number; description: string; images?: string[]; pickupLocation: string; preorderDeadline?: string; pickupTime?: string; active: boolean; createdAt: number; lastOrderId?: string };
 export type Order = { id: string; buyerId: string; buyerName: string; sellerId: string; sellerName: string; listingId: string; foodName: string; unitPrice: number; quantity: number; total: number; pickupLocation: string; pickupTime?: string; purchaseType: 'online' | 'onsite'; status: 'pending_payment' | 'proof_submitted' | 'preparing' | 'ready' | 'completed' | 'cancelled'; proofId?: string; createdAt: number; updatedAt: number };
 
 export async function createProfile(user: User, name: string, role: Profile['role']) {
@@ -36,13 +36,13 @@ export function watchOrders(role: Profile['role'], uid: string, next: (items: Or
   }, error);
 }
 
-export async function saveListing(seller: Profile, values: Pick<Listing, 'name' | 'category' | 'price' | 'stock' | 'description' | 'pickupLocation' | 'preorderDeadline' | 'pickupTime'>, id?: string) {
+export async function saveListing(seller: Profile, values: Pick<Listing, 'name' | 'category' | 'price' | 'stock' | 'description' | 'images' | 'pickupLocation' | 'preorderDeadline' | 'pickupTime'>, id?: string) {
   if (id) {
     await updateDoc(doc(db, 'listings', id), { ...values, sellerName: seller.shopName || seller.name });
     return id;
   }
   const listing = doc(collection(db, 'listings'));
-  await setDoc(listing, { ...values, campus: 'BINUS', sellerId: seller.id, sellerName: seller.shopName || seller.name, active: true, createdAt: Date.now() });
+  await setDoc(listing, { ...values, sellerId: seller.id, sellerName: seller.shopName || seller.name, active: true, createdAt: Date.now() });
   return listing.id;
 }
 

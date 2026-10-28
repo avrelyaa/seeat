@@ -8,42 +8,65 @@ service cloud.firestore {
     function self(id) { return verifiedUser() && request.auth.uid == id; }
     function user(id) { return get(/databases/$(database)/documents/users/$(id)).data; }
     function seller(id) { return self(id) && user(id).role == 'seller'; }
+    function admin() { return verifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+
+    match /admins/{id} {
+      allow get: if self(id);
+      allow list, create, update, delete: if false;
+    }
+    function foodImage(image) {
+      return image is string && image.size() < 250000 && image.matches('data:image/jpeg;base64,.*');
+    }
+    function foodImages(data) {
+      return !('images' in data) || (data.images is list && data.images.size() <= 3
+        && (data.images.size() < 1 || foodImage(data.images[0]))
+        && (data.images.size() < 2 || foodImage(data.images[1]))
+        && (data.images.size() < 3 || foodImage(data.images[2])));
+    }
 
     match /users/{id} {
-      allow get: if verifiedUser() && (request.auth.uid == id || resource.data.role == 'seller');
-      allow list: if false;
+      allow get: if verifiedUser() && (request.auth.uid == id || resource.data.role == 'seller' || admin());
+      allow list: if admin();
       allow create: if self(id)
         && request.resource.data.keys().hasOnly(['id', 'name', 'role'])
         && request.resource.data.id == id
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.role in ['buyer', 'seller'];
-      allow update: if seller(id)
+      allow update: if (seller(id)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shopName', 'pickupLocation', 'qrisUrl'])
         && request.resource.data.shopName is string
         && request.resource.data.pickupLocation is string
         && (!('qrisUrl' in request.resource.data)
           || (request.resource.data.qrisUrl is string
             && request.resource.data.qrisUrl.size() < 700000
-            && request.resource.data.qrisUrl.matches('data:image/jpeg;base64,.*')));
+            && request.resource.data.qrisUrl.matches('data:image/jpeg;base64,.*'))))
+        || (admin() && resource.data.role == 'seller'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verified'])
+          && request.resource.data.verified is bool);
       allow delete: if false;
     }
 
     match /listings/{id} {
       allow read: if verifiedUser();
       allow create: if seller(request.resource.data.sellerId)
-        && request.resource.data.keys().hasOnly(['campus','sellerId','sellerName','name','category','price','stock','description','pickupLocation','preorderDeadline','pickupTime','active','createdAt'])
-        && request.resource.data.campus == 'BINUS'
+        && request.resource.data.keys().hasOnly(['campus','sellerId','sellerName','name','category','price','stock','description','images','pickupLocation','preorderDeadline','pickupTime','active','createdAt'])
+        && (!('campus' in request.resource.data) || request.resource.data.campus is string)
+        && foodImages(request.resource.data)
         && request.resource.data.price is int && request.resource.data.price > 0
         && request.resource.data.stock is int && request.resource.data.stock >= 0
         && request.resource.data.active == true;
       allow update: if (
         seller(resource.data.sellerId)
-        && request.resource.data.campus == resource.data.campus
         && request.resource.data.sellerId == resource.data.sellerId
         && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.active == resource.data.active
+        && foodImages(request.resource.data)
         && request.resource.data.stock is int && request.resource.data.stock >= 0
         && request.resource.data.price is int && request.resource.data.price > 0
+      ) || (admin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active'])
+        && request.resource.data.active is bool
       ) || (
         verifiedUser() && user(request.auth.uid).role == 'buyer'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock','lastOrderId'])
@@ -131,6 +154,26 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/orders/$(id)).data.status == 'proof_submitted'
         && getAfter(/databases/$(database)/documents/orders/$(id)).data.proofId == id;
       allow update, delete: if false;
+    }
+
+    match /reports/{id} {
+      allow create: if verifiedUser()
+        && request.resource.data.keys().hasOnly(['reporterId','sellerId','listingId','foodName','reason','status','createdAt','updatedAt'])
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.listingId is string
+        && request.resource.data.sellerId == get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.sellerId
+        && request.resource.data.foodName == get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.name
+        && request.resource.data.reason in ['Food safety', 'Misleading listing', 'Payment issue', 'Other']
+        && request.resource.data.status == 'open'
+        && request.resource.data.createdAt is int
+        && request.resource.data.updatedAt == request.resource.data.createdAt;
+      allow get: if admin() || (verifiedUser() && resource.data.reporterId == request.auth.uid);
+      allow list: if admin();
+      allow update: if admin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+        && request.resource.data.status in ['open', 'resolved', 'dismissed']
+        && request.resource.data.updatedAt is int;
+      allow delete: if false;
     }
   }
 }

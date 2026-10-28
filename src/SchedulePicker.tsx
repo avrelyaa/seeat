@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-const hours = Array.from({ length: 13 }, (_, index) => index + 8);
+const hours = Array.from({ length: 24 }, (_, index) => index);
+const minutes = Array.from({ length: 60 }, (_, index) => index);
 
 function startOfDay(date: Date) {
   const day = new Date(date);
@@ -23,13 +24,7 @@ function sameDay(a: Date, b: Date) {
 
 function initialChoice() {
   const next = new Date();
-  next.setHours(next.getHours() + 2, 0, 0, 0);
-  if (next.getHours() > 20) {
-    next.setDate(next.getDate() + 1);
-    next.setHours(9, 0, 0, 0);
-  } else if (next.getHours() < 8) {
-    next.setHours(9, 0, 0, 0);
-  }
+  next.setHours(next.getHours() + 2, next.getMinutes(), 0, 0);
   return next;
 }
 
@@ -104,17 +99,18 @@ export function SchedulePicker({
           <Text style={[s.dayNumber, selected && sameDay(selected, day) && s.selectedText]}>{day.getDate()}</Text>
         </Pressable>)}
       </ScrollView>
-      <Text style={[s.subLabel, s.timeLabel]}>TIME</Text>
+      <Text style={[s.subLabel, s.timeLabel]}>HOUR</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hours}>
         {hours.map(hour => <Pressable key={hour} onPress={() => chooseHour(hour)} style={[s.hour, selected?.getHours() === hour && s.selected]}>
           <Text style={[s.hourText, selected?.getHours() === hour && s.selectedText]}>{String(hour).padStart(2, '0')}</Text>
         </Pressable>)}
       </ScrollView>
-      <View style={s.minutes}>
-        {[0, 30].map(minute => <Pressable key={minute} onPress={() => chooseMinute(minute)} style={[s.minute, selected?.getMinutes() === minute && s.selected]}>
-          <Text style={[s.hourText, selected?.getMinutes() === minute && s.selectedText]}>{minute === 0 ? 'On the hour' : 'Half past'}</Text>
+      <Text style={[s.subLabel, s.timeLabel]}>MINUTE</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.minutes}>
+        {minutes.map(minute => <Pressable key={minute} onPress={() => chooseMinute(minute)} style={[s.hour, selected?.getMinutes() === minute && s.selected]}>
+          <Text style={[s.hourText, selected?.getMinutes() === minute && s.selectedText]}>{String(minute).padStart(2, '0')}</Text>
         </Pressable>)}
-      </View>
+      </ScrollView>
     </View>}
   </View>;
 }
@@ -146,6 +142,5 @@ const s = StyleSheet.create({
   hours: { gap: 7, paddingHorizontal: 15, paddingTop: 10 },
   hour: { minWidth: 50, paddingVertical: 9, borderRadius: 10, alignItems: 'center', backgroundColor: '#FFFFFF' },
   hourText: { color: '#4A3041', fontSize: 13, fontWeight: '700' },
-  minutes: { flexDirection: 'row', gap: 8, paddingHorizontal: 15, marginTop: 9 },
-  minute: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: '#FFFFFF' },
+  minutes: { gap: 7, paddingHorizontal: 15, paddingTop: 10 },
 });
